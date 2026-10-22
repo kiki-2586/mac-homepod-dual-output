@@ -20,7 +20,9 @@ final class AudioFlowMonitor {
     private var frames:Int64=0,bytes:Int64=0
     private var started=0.0,captureProgress=0.0,sendProgress=0.0
     private var sawCapture=false,sawSend=false
-    func begin(frames:Int64,bytes:Int64,now:Double){
+    private var requiresBackend=true
+    func begin(frames:Int64,bytes:Int64,now:Double,requiresBackend:Bool=true){
+        self.requiresBackend=requiresBackend
         self.frames=frames;self.bytes=bytes;started=now
         captureProgress=now;sendProgress=now;sawCapture=false;sawSend=false
     }
@@ -28,6 +30,10 @@ final class AudioFlowMonitor {
         if frames>self.frames{captureProgress=now;sawCapture=true}
         if bytes>self.bytes{sendProgress=now;sawSend=true}
         self.frames=frames;self.bytes=bytes
+        if !requiresBackend {
+            if sawCapture {return now-captureProgress<6 ? .flowing:.stalled}
+            return now-started>45 ? .stalled:.waiting
+        }
         let healthy=connected && sawCapture && sawSend && now-captureProgress<6 && now-sendProgress<6
         if healthy{return .flowing}
         if sawCapture && sawSend {

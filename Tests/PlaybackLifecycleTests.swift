@@ -23,6 +23,17 @@ import Foundation
   precondition(monitor.evaluate(frames:200,bytes:4,connected:true,now:14) == .stalled,"blocked FIFO concealed by live capture")
   monitor.begin(frames:0,bytes:0,now:0)
   precondition(monitor.evaluate(frames:1,bytes:0,connected:false,now:2) == .waiting)
+  // Native AirPlay owns the remote path: local capture must not wait for a FIFO.
+  monitor.begin(frames:0,bytes:0,now:0,requiresBackend:false)
+  precondition(monitor.evaluate(frames:48000,bytes:0,connected:false,now:1) == .flowing,
+               "native follow incorrectly requires an OwnTone connection")
+  precondition(monitor.evaluate(frames:48000,bytes:0,connected:false,now:8) == .stalled,
+               "native follow concealed stopped capture")
+  monitor.begin(frames:0,bytes:0,now:0,requiresBackend:false)
+  precondition(monitor.evaluate(frames:0,bytes:0,connected:false,now:46) == .stalled)
+  // Switching back must restore the remote-path requirement.
+  monitor.begin(frames:0,bytes:0,now:0)
+  precondition(monitor.evaluate(frames:48000,bytes:0,connected:false,now:1) == .waiting)
   print("PASS: stopped startup invalidated, teardown serializes restart, stale response isolation, post-flow stall detection")
  }
 }

@@ -24,6 +24,7 @@ final class SyncEngine {
     private var outputs: [String: OutputRenderer] = [:]
 
     private(set) var running = false
+    private(set) var mode: PlaybackMode = .relay
 
     /// Real-time PCM16 pipe to OwnTone (which AirPlays it to the HomePods).
     static let fifoPath = OwnToneService.dataDirectory.appendingPathComponent("media/system.pipe").path
@@ -58,7 +59,7 @@ final class SyncEngine {
     /// (e.g. detect a pending/denied system-audio-recording permission).
     var framesCaptured: Int64 { ring.framesWritten }
     var bytesSent: Int64 { fifo.bytesSent }
-    var discontinuityReason: String? { fifo.discontinuityReason }
+    var discontinuityReason: String? { mode.usesBackend ? fifo.discontinuityReason : nil }
     var backendConnected: Bool { fifo.connected }
 
     /// Capture sample rate (valid after `start()`); local outputs render at this rate.
@@ -70,11 +71,12 @@ final class SyncEngine {
     /// Master start: bring up the capture tap and the AirPlay (FIFO) feed. Local
     /// outputs are attached separately via `addOutput`, so the engine can run with
     /// AirPlay only, local only, or both.
-    func start() throws {
+    func start(mode: PlaybackMode = .relay) throws {
         guard !running else { return }
+        self.mode = mode
         ring.reset()
         do {
-            try capture.start()
+            try capture.start(mode: mode)
         } catch {
             fifo.stop()
             throw error
