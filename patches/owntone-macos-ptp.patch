@@ -1,0 +1,14 @@
+--- a/src/ptpd.c
++++ b/src/ptpd.c
+@@ -92,6 +92,11 @@
+ 
+   DPRINTF(E_INFO, L_AIRPLAY, "Creating own ptp service\n");
+   airptp_create_own_service = true;
++  // The HTTP/API bind address must not restrict the LAN timing sockets.
++  // Bind both families: localhost peer-add messages may arrive over IPv6.
++#ifdef __APPLE__
++  bind_address = NULL;
++#endif
+   ptpd_hdl = airptp_daemon_bind(bind_address);
+   if (!ptpd_hdl)
+     {

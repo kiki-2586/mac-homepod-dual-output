@@ -1,0 +1,14 @@
+--- a/src/misc.c
++++ b/src/misc.c
+@@ -672,6 +672,11 @@
+   const char *bind_address = cfg_getstr(cfg_getsec(cfg, "general"), "bind_address");
+   bool v6_enabled = cfg_getbool(cfg_getsec(cfg, "general"), "ipv6");
+ 
++  // Only UDP timing/control traffic needs LAN reachability. Keep all TCP
++  // administration endpoints on the configured loopback bind address.
++  if (type == SOCK_DGRAM && bind_address && strcmp(bind_address, "127.0.0.1") == 0)
++    bind_address = NULL;
++
+   // Normally comply with config, except for "::" where we want to listen on
+   // both ipv4 and ipv6 (as the comment in the config file says)
+   if (bind_address && strcmp(bind_address, "::") == 0)

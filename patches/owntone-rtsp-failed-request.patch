@@ -1,0 +1,28 @@
+--- a/src/evrtsp/rtsp.c
++++ b/src/evrtsp/rtsp.c
+@@ -1483,8 +1483,15 @@
+ 	TAILQ_INSERT_TAIL(&evcon->requests, req, next);
+ 
+ 	/* If the connection object is not connected; make it so */
+-	if (!evrtsp_connected(evcon))
+-		return (evrtsp_connection_connect(evcon));
++	if (!evrtsp_connected(evcon)) {
++		int result = evrtsp_connection_connect(evcon);
++		if (result < 0) {
++			/* A failed request stays caller-owned, not connection-owned. */
++			TAILQ_REMOVE(&evcon->requests, req, next);
++			req->evcon = NULL;
++		}
++		return result;
++	}
+ 
+ 	/*
+ 	 * If it's connected already and we are the first in the queue,
+@@ -1810,6 +1817,7 @@
+ 		}
+ #else
+ 		if (errno != EINPROGRESS) {
++			event_warn("%s: connect to %s:%u failed", __func__, address, port);
+ 			goto out;
+ 		}
+ #endif
