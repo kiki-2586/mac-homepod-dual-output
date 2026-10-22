@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          uname -m
+          swift --version
+          xcrun --show-sdk-path
+      - name: Build Swift application
+        run: bash scripts/build-app.sh
+      - name: Audio and lifecycle regression tests
+        run: bash scripts/test.sh
+      - name: Script syntax
+        run: |
+          bash -n build.sh setup.sh scripts/*.sh
+          python3 -m py_compile scripts/*.py Tests/mock_server.py
+      - name: Whitespace check
+        run: git diff --check HEAD
