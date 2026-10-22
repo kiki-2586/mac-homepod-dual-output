@@ -56,7 +56,7 @@ final class ProcessTapCapture {
 
     deinit { scratch.deallocate() }
 
-    func start() throws {
+    func start(mode: PlaybackMode = .relay) throws {
         // Idempotency guard: never overwrite live IDs (would orphan a tap/aggregate).
         guard tapID == kAudioObjectUnknown, aggregateID == kAudioObjectUnknown else { return }
 
@@ -66,12 +66,10 @@ final class ProcessTapCapture {
         // Everything below creates HAL resources; on any failure tear down what was
         // built so a retry starts clean and no system-wide tap/aggregate leaks.
         do {
-            let description = Self.systemDescription(excluding: [processObject])
+            let description = Self.systemDescription(excluding: [processObject], mode: mode)
             description.uuid = UUID()
             description.name = "HomeSoundsSync Tap"
             description.isPrivate = true
-            // Mute captured sources while reading so local output uses our delayed copy.
-            description.muteBehavior = .mutedWhenTapped
 
             var newTap = AudioObjectID(kAudioObjectUnknown)
             let tapStatus = AudioHardwareCreateProcessTap(description, &newTap)
@@ -89,12 +87,13 @@ final class ProcessTapCapture {
             let nonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
             DBG.log("[HSS] tapFormat sr=\(asbd.mSampleRate) ch=\(channels) nonInterleaved=\(nonInterleaved) flags=\(String(format: "0x%x", asbd.mFormatFlags))")
 
-            try fifo?.configure(inputSampleRate: sampleRate)
-            fifo?.start()
+            let activeFeed = mode.usesBackend ? fifo : nil
+            try activeFeed?.configure(inputSampleRate: sampleRate)
+            activeFeed?.start()
             try createAggregate(tapUID: description.uuid.uuidString)
             DBG.log("[HSS] aggregate created aggID=\(aggregateID)")
             installFormatListener(expected: asbd)
-            try startIOProc(channels: channels, nonInterleaved: nonInterleaved)
+            try startIOProc(channels: channels, nonInterleaved: nonInterleaved, feed: activeFeed)
             DBG.log("[HSS] IOProc started — waiting for tapped frames…")
         } catch {
             DBG.log("[HSS] start FAILED: \(error)")
@@ -153,10 +152,10 @@ final class ProcessTapCapture {
         if AudioObjectAddPropertyListenerBlock(tapID,&address,DispatchQueue.main,listener)==noErr{formatListener=listener}
     }
 
-    static func systemDescription(excluding processes: [AudioObjectID]) -> CATapDescription {
+    static func systemDescription(excluding processes: [AudioObjectID], mode: PlaybackMode = .relay) -> CATapDescription {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: processes)
         description.isPrivate = true
-        description.muteBehavior = .mutedWhenTapped
+        description.muteBehavior = mode.usesBackend ? .mutedWhenTapped : .unmuted
         return description
     }
 
@@ -215,9 +214,9 @@ final class ProcessTapCapture {
         aggregateID = newAggregate
     }
 
-    private func startIOProc(channels: Int, nonInterleaved: Bool) throws {
+    private func startIOProc(channels: Int, nonInterleaved: Bool, feed: FifoFeed?) throws {
         let ring = self.ring
-        let fifo = self.fifo
+        let fifo = feed
         let scratch = self.scratch
         let scratchFrames = self.scratchFrames
 
