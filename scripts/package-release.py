@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Package the verified local app and source without build caches or user data."""
 from pathlib import Path
-import hashlib,json,shutil,subprocess,zipfile
+import hashlib,json,os,plistlib,shutil,subprocess,zipfile
 
 root=Path(__file__).resolve().parent.parent
 dist=root/'dist'
+app=Path(os.environ.get('MAC_HOMEPOD_APP_PATH',str(dist/'MacHomePod.app'))).resolve()
+with (app/'Contents/Info.plist').open('rb') as f:
+ version=plistlib.load(f)['CFBundleShortVersionString']
 stage=dist/'source-staging/MacHomePod-source'
 vendor=stage/'vendor-sources'
 vendor.mkdir(parents=True,exist_ok=True)
@@ -34,13 +37,17 @@ for name in files:
  if not source.is_file():continue
  target=stage/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,target)
 shutil.copytree(root/'backend/licenses',stage/'backend/licenses',dirs_exist_ok=True)
-sourcezip=dist/'MacHomePod-0.1.0-source.zip'
+sourcezip=dist/f'MacHomePod-{version}-source.zip'
 with zipfile.ZipFile(sourcezip,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
  for path in sorted(stage.rglob('*')):
   if path.is_file():z.write(path,path.relative_to(stage.parent))
-appzip=dist/'MacHomePod-0.1.0-arm64.zip'
-subprocess.run(['codesign','--verify','--deep','--strict',str(dist/'MacHomePod.app')],check=True)
-subprocess.run(['ditto','-c','-k','--sequesterRsrc','--keepParent',str(dist/'MacHomePod.app'),str(appzip)],check=True)
+appzip=dist/f'MacHomePod-{version}-arm64.zip'
+subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
+subprocess.run(['ditto','-c','-k','--sequesterRsrc','--keepParent',str(app),str(appzip)],check=True)
+checksums=[]
 for path in [sourcezip,appzip]:
  with zipfile.ZipFile(path) as z:assert z.testzip() is None
- print(f'{path.name}: {path.stat().st_size:,} bytes, SHA256 {hashlib.sha256(path.read_bytes()).hexdigest()}')
+ digest=hashlib.sha256(path.read_bytes()).hexdigest()
+ checksums.append(f'{digest}  {path.name}')
+ print(f'{path.name}: {path.stat().st_size:,} bytes, SHA256 {digest}')
+(dist/f'SHA256SUMS-{version}.txt').write_text('\n'.join(checksums)+'\n')

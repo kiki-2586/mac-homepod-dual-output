@@ -8,7 +8,7 @@ COMMON=(-swift-version 5 -sdk "$SDK" -target arm64-apple-macosx15.0 -module-cach
 AUDIO=(Sources/HomeSoundsSync/{PCM48kConverter,AudioFrameQueue,FifoFeed,Diagnostics}.swift)
 swiftc "${COMMON[@]}" "${AUDIO[@]}" Tests/AudioPipelineTests.swift -o .cache/tests/audio
 .cache/tests/audio
-swiftc "${COMMON[@]}" "${AUDIO[@]}" Sources/HomeSoundsSync/{ProcessTapCapture,RingBuffer}.swift Tests/CaptureConfigTests.swift -o .cache/tests/capture
+swiftc "${COMMON[@]}" "${AUDIO[@]}" Sources/HomeSoundsSync/{ProcessTapCapture,RingBuffer,PlaybackMode}.swift Tests/CaptureConfigTests.swift -o .cache/tests/capture
 .cache/tests/capture
 cp Tests/ringtest.swift .cache/tests/main.swift
 swiftc "${COMMON[@]}" Sources/HomeSoundsSync/RingBuffer.swift .cache/tests/main.swift -o .cache/tests/ring
