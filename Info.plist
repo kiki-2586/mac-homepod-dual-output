@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Mac HomePod 同播</string>
+	<key>CFBundleExecutable</key>
+	<string>HomeSoundsSync</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.mac-homepod.dual-output</string>
+	<key>CFBundleName</key>
+	<string>Mac HomePod 同播</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>捕获 Mac 系统声音，并同时发送到 Mac 扬声器和 HomePod。音频只在本机和你的局域网设备之间传输。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_raop._tcp</string>
+		<string>_airplay._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>发现并连接同一局域网内的 HomePod。</string>
+</dict>
+</plist>

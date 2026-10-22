@@ -1,0 +1,52 @@
+# Swift / SwiftPM build artifacts
+.build/
+Package.resolved
+
+# App bundle (regenerate with ./build.sh)
+*.app
+
+# Distribution artifacts (regenerate with ./make-dmg.sh)
+*.dmg
+*.zip
+
+# Icon intermediates (regenerate with ./makeicon.sh)
+*.iconset
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+*.xcodeproj
+.swiftpm/
+.vscode/
+
+# Tooling / assistant session state (never publish)
+.omc/
+.claude/
+
+# Local diagnostics
+hss-debug.log
+
+# 자격증명 — 이 저장소는 공개다. Sparkle 자동 업데이트 도입으로 EdDSA 개인키가
+# 배포 체인의 신뢰 앵커가 되었고, 그 키 하나가 TechJuice Mac 앱 전부를 서명한다.
+# 실수로 커밋되면 되돌릴 수 없다.
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.der
+*_priv*
+.env
+.env.*
+credentials*
+.cache/
+.deps/
+logs/
+dist/
+backend/
+__pycache__/
+*.pyc
+
+# Local planning records
+docs/superpowers/
