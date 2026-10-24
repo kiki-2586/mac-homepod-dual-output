@@ -2,7 +2,7 @@
 
 将整个 Mac 的系统声音同时输出到本地扬声器与同一局域网内的 HomePod，支持独立音量和手动同步延迟。浏览器、普通视频和本地播放器均可使用。
 
-[下载 v0.2.1 实验版](https://github.com/kiki-2586/mac-homepod-dual-output/releases/tag/v0.2.1) · [中文使用与构建说明](README.zh-CN.md) · [更新与安装说明](RELEASE.md) · [验证记录](VALIDATION.md)
+[下载 v0.3.0 实验版](https://github.com/kiki-2586/mac-homepod-dual-output/releases/tag/v0.3.0) · [中文使用与构建说明](README.zh-CN.md) · [更新日志](CHANGELOG.md) · [更新与安装说明](RELEASE.md) · [验证记录](VALIDATION.md)
 
 ## 紧凑玻璃界面（v0.2.1）
 
@@ -16,9 +16,15 @@
 
 当前设备在 TV App 当前播放内容中，用户确认2000ms时 Mac、HomePod 和画面基本同步；这只是本机听音校准值。受保护内容及 App 内直传音频可能无法捕获。两种模式分别保存延迟。
 
+### 左右声道分配（v0.3.0）
+
+原生跟随新增“立体声同播／Mac 左 · HomePod 右／Mac 右 · HomePod 左”。分声道时只勾选 Mac 内置扬声器，停止后可交换左右。程序临时替换原声，并将选定声道送回当前 AirPlay 输出；停止或失败后恢复完整原声。保持系统输出和 HomePod 音量，不启动 OwnTone；Mac 音量、延迟仍可调节。启停可能有短暂切换声。这是普通立体声分配，不是 Apple 空间音频。
+
+60秒临时原型及正式集成版随后逐项实测：用户确认正向左右分配正确、交换后流畅同步、普通同播两段两边都有声且流畅同步。当前本机已安装0.3.0，详细范围见[验证记录](VALIDATION.md)；本次迭代见[更新日志](CHANGELOG.md)。
+
 ## 共同播放（v0.1.0 及后续版本）
 
-1. 下载 Release 中的 `MacHomePod-0.2.1-arm64.zip` 并解压，将 `.app` 放入“应用程序”。预编译版本需要 Apple Silicon、macOS 26.0 或更新版本。
+1. 下载 Release 中的 `MacHomePod-0.3.0-arm64.zip` 并解压，退出旧版后完整替换“应用程序”中的 `.app`。预编译版本需要 Apple Silicon、macOS 26.0 或更新版本。
 2. Mac 与 HomePod 连接同一局域网；Mac 的系统声音输出保持本地扬声器。
 3. 打开应用，允许系统音频录制及本地网络访问。勾选本地扬声器和 HomePod，点击“开始共同播放”。
 4. 用节拍素材微调 Mac 延迟：Mac 提前则增加，Mac 落后则减少。设置会自动保存。
@@ -77,5 +83,7 @@ Swift 应用使用 [MIT License](LICENSE)，基于 [TechJuicelab/HomeSounds Sync
 Play ordinary Mac system audio on local speakers and HomePod simultaneously, with per-device volume and manual delay adjustment. The app uses a Core Audio process tap, in-memory local delay, and a separate bundled OwnTone AirPlay sender. No virtual audio driver or login service is installed.
 
 Version 0.2.1 includes native AirPlay follow mode: leave TV/system AirPlay connected and replay an unmuted system tap on delayed local speakers. It does not start OwnTone or take over HomePod. Delays are stored separately by mode; protected media and direct in-app AirPlay may not be capturable. The update also adds a compact native Liquid Glass interface and an illustrated app icon.
+
+Version 0.3.0 adds left/right channel assignment and swapping between the built-in Mac speakers and the current native AirPlay output. It temporarily replaces the original stream while splitting channels and restores it on stop or failure. A 40 ms replay buffer prevents underruns, and software gain ramps reduce abrupt transitions. Manual calibration remains necessary; this is ordinary stereo, not Apple Spatial Audio. See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 The prebuilt experimental app requires Apple Silicon and macOS26+. It is ad-hoc signed and not notarized. AirPlay latency is expected; video timing is not adjusted automatically. See the Chinese guide for setup and the validation report for tested devices and untested cases.

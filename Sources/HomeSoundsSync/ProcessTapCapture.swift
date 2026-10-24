@@ -56,7 +56,7 @@ final class ProcessTapCapture {
 
     deinit { scratch.deallocate() }
 
-    func start(mode: PlaybackMode = .relay) throws {
+    func start(mode: PlaybackMode = .relay, channelMode: NativeChannelMode = .stereo) throws {
         // Idempotency guard: never overwrite live IDs (would orphan a tap/aggregate).
         guard tapID == kAudioObjectUnknown, aggregateID == kAudioObjectUnknown else { return }
 
@@ -66,7 +66,7 @@ final class ProcessTapCapture {
         // Everything below creates HAL resources; on any failure tear down what was
         // built so a retry starts clean and no system-wide tap/aggregate leaks.
         do {
-            let description = Self.systemDescription(excluding: [processObject], mode: mode)
+            let description = Self.systemDescription(excluding: [processObject], mode: mode, channelMode: channelMode)
             description.uuid = UUID()
             description.name = "HomeSoundsSync Tap"
             description.isPrivate = true
@@ -152,10 +152,10 @@ final class ProcessTapCapture {
         if AudioObjectAddPropertyListenerBlock(tapID,&address,DispatchQueue.main,listener)==noErr{formatListener=listener}
     }
 
-    static func systemDescription(excluding processes: [AudioObjectID], mode: PlaybackMode = .relay) -> CATapDescription {
+    static func systemDescription(excluding processes: [AudioObjectID], mode: PlaybackMode = .relay, channelMode: NativeChannelMode = .stereo) -> CATapDescription {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: processes)
         description.isPrivate = true
-        description.muteBehavior = mode.usesBackend ? .mutedWhenTapped : .unmuted
+        description.muteBehavior = mode.usesBackend || channelMode.replacesNativeAudio ? .mutedWhenTapped : .unmuted
         return description
     }
 

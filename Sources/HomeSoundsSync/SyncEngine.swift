@@ -22,6 +22,20 @@ final class SyncEngine {
 
     /// Live local outputs, keyed by Core Audio device UID.
     private var outputs: [String: OutputRenderer] = [:]
+    private var nativeOutput: OutputRenderer?
+    private(set) var channelMode: NativeChannelMode = .stereo
+
+    enum RoutingError: LocalizedError {
+        case nativeOutputRequired, localOutputRequired, routeChanged, unsupportedMode
+        var errorDescription: String? {
+            switch self {
+            case .nativeOutputRequired: return "请先把系统声音输出连接到 HomePod。"
+            case .localOutputRequired: return "左右分声道时，请只勾选 Mac 内置扬声器。"
+            case .routeChanged: return "AirPlay 输出已改变，已恢复原声。请重新开始。"
+            case .unsupportedMode: return "左右分声道需使用原生 AirPlay 跟随模式。"
+            }
+        }
+    }
 
     private(set) var running = false
     private(set) var mode: PlaybackMode = .relay
@@ -71,23 +85,43 @@ final class SyncEngine {
     /// Master start: bring up the capture tap and the AirPlay (FIFO) feed. Local
     /// outputs are attached separately via `addOutput`, so the engine can run with
     /// AirPlay only, local only, or both.
-    func start(mode: PlaybackMode = .relay) throws {
+    func start(mode: PlaybackMode = .relay, channelMode: NativeChannelMode = .stereo, nativeDeviceID: AudioObjectID? = nil) throws {
         guard !running else { return }
+        guard mode == .nativeAirPlay || !channelMode.replacesNativeAudio else { throw RoutingError.unsupportedMode }
         self.mode = mode
+        self.channelMode = channelMode
+        let devices = AudioDevices()
+        if channelMode.replacesNativeAudio {
+            guard let nativeDeviceID, devices.isAirPlay(nativeDeviceID),
+                  devices.defaultOutputDevice() == nativeDeviceID else { throw RoutingError.nativeOutputRequired }
+        }
+        let routeUID = nativeDeviceID.map { devices.uid(of: $0) }
         ring.reset()
         do {
-            try capture.start(mode: mode)
+            try capture.start(mode: mode, channelMode: channelMode)
+            if channelMode.replacesNativeAudio, let nativeDeviceID {
+                let remote = OutputRenderer(ring: ring)
+                nativeOutput = remote
+                remote.setSourceChannel(channelMode.airplayChannel)
+                remote.setGain(1)
+                remote.onDeviceLost = { [weak self] in
+                    guard let self else { return }
+                    self.stop(); self.onStopped?("AirPlay 设备已断开，已恢复原声。")
+                }
+                try remote.start(deviceID: nativeDeviceID, inputSampleRate: capture.sampleRate, delayMs: channelMode.airplayBufferMs)
+                guard devices.defaultOutputDevice() == nativeDeviceID, devices.uid(of: nativeDeviceID) == routeUID else { throw RoutingError.routeChanged }
+            }
         } catch {
-            fifo.stop()
+            stop() // Also tears down partial startup before running becomes true.
             throw error
         }
         running = true
     }
 
     func stop() {
-        guard running else { return }
         for (_, r) in outputs { r.stop() }
         outputs.removeAll()
+        nativeOutput?.stop(); nativeOutput = nil
         capture.stop()
         fifo.stop()
         running = false
@@ -98,10 +132,12 @@ final class SyncEngine {
     /// fails to start (the caller should surface it and leave the row unchecked).
     func addOutput(uid: String, deviceID: AudioObjectID, delayMs: Double, gain: Double) throws {
         guard running, outputs[uid] == nil else { return }
+        guard channelMode.accepts(localUIDs: Set(outputs.keys).union([uid])) else { throw RoutingError.localOutputRequired }
         let renderer = OutputRenderer(ring: ring)
         renderer.onDeviceLost = { [weak self] in self?.handleOutputLost(uid) }
-        try renderer.start(deviceID: deviceID, inputSampleRate: capture.sampleRate, delayMs: delayMs)
+        renderer.setSourceChannel(channelMode.localChannel)
         renderer.setGain(gain)
+        try renderer.start(deviceID: deviceID, inputSampleRate: capture.sampleRate, delayMs: delayMs)
         outputs[uid] = renderer
     }
 
@@ -112,6 +148,13 @@ final class SyncEngine {
 
     func setDelay(uid: String, ms: Double) { outputs[uid]?.setDelayMs(ms) }
     func setGain(uid: String, g: Double) { outputs[uid]?.setGain(g) }
+
+    /// The UI allows 40 ms for the 20 ms gain ramp before disposing resources.
+    /// Termination and failed startup can still call stop() immediately.
+    func beginFadeOut() {
+        for renderer in outputs.values { renderer.setGain(0) }
+        nativeOutput?.setGain(0)
+    }
 
     private func handleOutputLost(_ uid: String) {
         guard outputs[uid] != nil else { return }

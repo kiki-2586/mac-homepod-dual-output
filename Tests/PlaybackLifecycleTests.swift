@@ -31,6 +31,14 @@ import Foundation
                "native follow concealed stopped capture")
   monitor.begin(frames:0,bytes:0,now:0,requiresBackend:false)
   precondition(monitor.evaluate(frames:0,bytes:0,connected:false,now:46) == .stalled)
+  // Replacing native audio must restore quickly if capture never starts.
+  monitor.begin(frames:0,bytes:0,now:0,requiresBackend:false,startupTimeout:6)
+  guard monitor.evaluate(frames:0,bytes:0,connected:false,now:7) == .stalled else {
+   print("FAIL: native split must not leave original audio muted for the normal 45-second startup timeout"); exit(1)
+  }
+  // A new normal follow session gets its original permission-prompt grace period.
+  monitor.begin(frames:0,bytes:0,now:0,requiresBackend:false)
+  precondition(monitor.evaluate(frames:0,bytes:0,connected:false,now:7) == .waiting)
   // Switching back must restore the remote-path requirement.
   monitor.begin(frames:0,bytes:0,now:0)
   precondition(monitor.evaluate(frames:48000,bytes:0,connected:false,now:1) == .waiting)
