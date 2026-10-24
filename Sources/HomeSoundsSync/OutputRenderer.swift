@@ -42,6 +42,9 @@ final class OutputRenderer {
     /// Software volume for the local output, 0…1.5 (×1000, atomic).
     private let gainMilli = Atomic<Int>(1000)
     func setGain(_ g: Double) { gainMilli.store(Int(max(0, min(1.5, g)) * 1000), ordering: .releasing) }
+    private let sourceChannel = Atomic<Int>(StereoChannel.stereo.rawValue)
+    func setSourceChannel(_ channel: StereoChannel) { sourceChannel.store(channel.rawValue, ordering: .releasing) }
+    private var processor = StereoOutputProcessor(rampFrames: 0)
 
     /// Invoked on the main queue if the bound output device disappears mid-playback.
     var onDeviceLost: (() -> Void)?
@@ -75,6 +78,7 @@ final class OutputRenderer {
     func start(deviceID: AudioObjectID, inputSampleRate: Double, delayMs: Double) throws {
         self.inputSampleRate = inputSampleRate
         self.resyncThreshold = Int(inputSampleRate * 0.25) // 250 ms drift budget
+        processor = StereoOutputProcessor(rampFrames: Int(inputSampleRate * 0.02))
 
         var acd = AudioComponentDescription(
             componentType: kAudioUnitType_Output,
@@ -204,16 +208,11 @@ final class OutputRenderer {
         let delay = Int(delayFrames.load(ordering: .acquiring))
         reader.read(into: dst, frames: frames, delayFrames: delay, resyncThreshold: resyncThreshold)
 
-        // Apply the local-output volume.
+        // Apply channel assignment and a 20 ms attack / volume ramp. The processor
+        // waits for actual audio so delayed prefill does not consume the attack.
         let gain = Float(gainMilli.load(ordering: .acquiring)) / 1000.0
-        if gain != 1.0 {
-            let n = frames * 2
-            for i in 0..<n {
-                var v = dst[i] * gain
-                if v > 1 { v = 1 } else if v < -1 { v = -1 }
-                dst[i] = v
-            }
-        }
+        let channel = StereoChannel(rawValue: sourceChannel.load(ordering: .acquiring)) ?? .stereo
+        processor.process(dst, frames: frames, channel: channel, gain: gain)
 
         var peak: Float = 0
         let n = frames * 2

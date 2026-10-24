@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var refreshButton=NSButton(title:"刷新设备",target:nil,action:nil)
     private var outputList=NSStackView()
     private let modePicker=NSSegmentedControl()
+    private let channelPicker=NSPopUpButton(frame:.zero,pullsDown:false)
+    private var nativeChannels:NativeChannelMode = .stereo
     private var deviceScroll:DeviceListScrollView!
     private let notice=NSTextField(wrappingLabelWithString:"")
     private var mode:PlaybackMode = .relay
@@ -39,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification:Notification) {
         mode=PlaybackMode(rawValue:preferences.string(forKey:"playbackMode") ?? "")
             ?? (devices.isAirPlay(devices.defaultOutputDevice()) ? .nativeAirPlay:.relay)
+        nativeChannels=NativeChannelMode(rawValue:preferences.string(forKey:"nativeChannelMode") ?? "") ?? .stereo
         selectedRemote=Set(preferences.stringArray(forKey:"selectedRemote") ?? [])
         selectedLocal=Set(preferences.stringArray(forKey:"selectedLocal") ?? [])
         makeMenu();makeWindow();refreshLocal();updateModeUI();installRouteListener()
@@ -132,6 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let heading=NSStackView();heading.orientation = .horizontal
         let label=NSTextField(labelWithString:"输出设备");label.font = .systemFont(ofSize:12,weight:.semibold);label.textColor = .secondaryLabelColor
         heading.addArrangedSubview(label);heading.addArrangedSubview(NSView())
+        channelPicker.addItems(withTitles:NativeChannelMode.allCases.map(\.title))
+        channelPicker.controlSize = .small;channelPicker.target=self;channelPicker.action=#selector(channelChanged)
+        channelPicker.setAccessibilityLabel("声道分配")
+        channelPicker.toolTip="停止播放后可切换声道；分声道仅支持 Mac 内置扬声器与当前 AirPlay 输出。"
+        heading.addArrangedSubview(channelPicker)
         refreshButton.title="";refreshButton.image=NSImage(systemSymbolName:"arrow.clockwise",accessibilityDescription:"刷新设备")
         refreshButton.isBordered=false;refreshButton.toolTip="刷新设备";refreshButton.setAccessibilityLabel("刷新设备")
         refreshButton.target=self;refreshButton.action=#selector(refreshTapped);heading.addArrangedSubview(refreshButton)
@@ -197,17 +205,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func savedDelay(_ uid:String)->Double {
         preferences.object(forKey:mode.delayKey(for:uid)) as? Double
-            ?? (mode == .nativeAirPlay ? 1250:Double(OwnToneService.bufferDurationMS))
+            ?? (mode == .nativeAirPlay ? (nativeChannels.replacesNativeAudio ? 2000:1250):Double(OwnToneService.bufferDurationMS))
     }
+    private var nativeSplit:Bool { mode == .nativeAirPlay && nativeChannels.replacesNativeAudio }
+    private var startTitle:String { mode == .relay ? "开始共同播放":(nativeSplit ? "开始分声道":"开始本地跟随") }
+    private var stopTitle:String { mode == .relay ? "停止共同播放":(nativeSplit ? "停止分声道":"停止本地跟随") }
     private func updateModeUI(){
         modePicker.selectedSegment=mode == .relay ? 0:1
+        channelPicker.isHidden = mode.usesBackend
+        channelPicker.selectItem(at:NativeChannelMode.allCases.firstIndex(of:nativeChannels) ?? 0)
+        channelPicker.isEnabled = !busy && !engine.running
         for row in remoteRows.values{row.container.isHidden = !mode.usesBackend}
         deviceScroll.needsLayout=true
         for (uid,row) in localRows{row.delay?.doubleValue=savedDelay(uid);row.updateDelay()}
         notice.stringValue=mode == .nativeAirPlay
-            ? "先连接 HomePod，再开启本地跟随。Mac 提前就增加延迟，落后就减少。"
+            ? (nativeSplit ? "只勾选 Mac 内置扬声器。分声道时可能听到短暂启停切换声。":"先连接 HomePod，再开启本地跟随。Mac 提前就增加延迟，落后就减少。")
             : "由应用连接 HomePod，并延迟 Mac 声音。视频画面不会自动补偿。"
-        button.title=mode == .nativeAirPlay ? "开始本地跟随":"开始共同播放"
+        button.title=startTitle
+    }
+    @objc private func channelChanged(){
+        guard !busy,!engine.running,mode == .nativeAirPlay else{return}
+        let index=channelPicker.indexOfSelectedItem
+        guard NativeChannelMode.allCases.indices.contains(index) else{return}
+        nativeChannels=NativeChannelMode.allCases[index]
+        preferences.set(nativeChannels.rawValue,forKey:"nativeChannelMode")
+        updateModeUI();refreshNative()
     }
     @objc private func modeChanged(){
         guard !busy,!engine.running else{return}
@@ -225,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let ready=devices.isAirPlay(route)
         status.stringValue=ready ? "原生 AirPlay 已就绪":"请先原生连接 HomePod"
         status.textColor = ready ? .secondaryLabelColor:.systemOrange
-        detail.stringValue=ready ? "系统输出：\(devices.name(of:route))；选择本地扬声器后开始跟随。"
+        detail.stringValue=ready ? "系统输出：\(devices.name(of:route))；\(nativeSplit ? nativeChannels.title + "，仅勾选内置扬声器。":"选择本地扬声器后开始跟随。")"
             : "在 TV App／系统声音中选择 HomePod，并确认正常播放。此模式不会替你建立连接。"
     }
     private func installRouteListener(){
@@ -234,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),&address,DispatchQueue.main,listener)==noErr{routeListener=listener}
     }
     private func checkNativeRoute(){
-        guard engine.running,engine.mode == .nativeAirPlay else{return}
+        guard engine.running,engine.mode == .nativeAirPlay,lifecycle.phase != .stopping else{return}
         let route=devices.defaultOutputDevice()
         if !devices.isAirPlay(route) || devices.uid(of:route) != nativeRouteUID {
             stopPlayback(message:"原生 AirPlay 输出已改变，已停止 Mac 跟随。")
@@ -299,7 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func saveSelection(){preferences.set(Array(selectedLocal),forKey:"selectedLocal");preferences.set(Array(selectedRemote),forKey:"selectedRemote")}
     @objc private func localVolumeChanged(_ sender:NSSlider){
         guard let id=sender.identifier?.rawValue else{return}
-        localRows[id]?.updateVolume();preferences.set(sender.doubleValue,forKey:"volume."+id);engine.setGain(uid:id,g:sender.doubleValue)
+        localRows[id]?.updateVolume();preferences.set(sender.doubleValue,forKey:"volume."+id)
+        if lifecycle.phase != .stopping{engine.setGain(uid:id,g:sender.doubleValue)}
     }
     @objc private func remoteVolumeChanged(_ sender:NSSlider){
         guard let id=sender.identifier?.rawValue else{return}
@@ -318,13 +341,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc private func delayChanged(_ sender:NSSlider){
         guard let id=sender.identifier?.rawValue else{return}
-        preferences.set(sender.doubleValue,forKey:mode.delayKey(for:id));localRows[id]?.updateDelay();engine.setDelay(uid:id,ms:sender.doubleValue)
+        preferences.set(sender.doubleValue,forKey:mode.delayKey(for:id));localRows[id]?.updateDelay()
+        if lifecycle.phase != .stopping{engine.setDelay(uid:id,ms:sender.doubleValue)}
     }
     @objc private func toggle(){
         guard !busy else{return}
         if engine.running{stopPlayback(message:mode == .nativeAirPlay ? "已停止 Mac 跟随，原生 AirPlay 继续播放。":"已停止，恢复 Mac 普通播放。");return}
         guard let token=lifecycle.beginStart() else{return}
-        busy=true;button.isEnabled=false;modePicker.isEnabled=false
+        busy=true;button.isEnabled=false;modePicker.isEnabled=false;channelPicker.isEnabled=false
         operation=Task{@MainActor in await startPlayback(token:token)}
     }
     private func requireCurrent(_ token:Int) throws {
@@ -336,11 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         defer{
             if lifecycle.isCurrent(token){
                 lifecycle.finishStart(token,running:engine.running)
-                busy=false;button.isEnabled=true;modePicker.isEnabled = !engine.running
-                button.title=engine.running ? (mode == .nativeAirPlay ? "停止本地跟随":"停止共同播放"):(mode == .nativeAirPlay ? "开始本地跟随":"开始共同播放")
+                busy=false;button.isEnabled=true;modePicker.isEnabled = !engine.running;channelPicker.isEnabled = !engine.running
+                button.title=engine.running ? stopTitle:startTitle
             }
         }
         guard !locals.isEmpty,(!mode.usesBackend || !remotes.isEmpty) else{alert(mode.usesBackend ? "请选择至少一个本地扬声器和一个 HomePod。":"请选择至少一个本地扬声器。");return}
+        guard !nativeSplit || nativeChannels.accepts(localUIDs:locals) else{alert("左右分声道时，请只勾选 Mac 内置扬声器。HomePod 音量继续在 TV／系统中调节。");return}
         activeRemote=remotes
         status.stringValue=mode == .nativeAirPlay ? "正在启动 Mac 本地跟随…":"正在连接所选设备…"
         do{
@@ -363,7 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard devices.isAirPlay(route) else{throw OwnToneService.ServiceError.launch("请先在 TV／系统声音中原生连接 HomePod。")}
                 nativeRouteUID=devices.uid(of:route)
             }
-            try requireCurrent(token);try engine.start(mode:mode)
+            try requireCurrent(token)
+            try engine.start(mode:mode,channelMode:mode == .nativeAirPlay ? nativeChannels:.stereo,nativeDeviceID:mode == .nativeAirPlay ? devices.defaultOutputDevice():nil)
             for id in locals{
                 guard let row=localRows[id],let device=devices.deviceID(forUID:id) else{continue}
                 try engine.addOutput(uid:id,deviceID:device,delayMs:row.delay?.doubleValue ?? Double(OwnToneService.bufferDurationMS),gain:row.volume.doubleValue)
@@ -373,7 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let route=devices.defaultOutputDevice()
                 guard devices.isAirPlay(route),devices.uid(of:route)==nativeRouteUID else{throw OwnToneService.ServiceError.launch("原生 AirPlay 输出已改变，请重新连接后再跟随。")}
             }
-            flow.begin(frames:engine.framesCaptured,bytes:engine.bytesSent,now:ProcessInfo.processInfo.systemUptime,requiresBackend:mode.usesBackend)
+            flow.begin(frames:engine.framesCaptured,bytes:engine.bytesSent,now:ProcessInfo.processInfo.systemUptime,requiresBackend:mode.usesBackend,startupTimeout:nativeSplit ? 6:45)
             status.stringValue=mode == .nativeAirPlay ? "等待捕获原生 AirPlay 音频…":"等待系统音频与 HomePod 接收…";status.textColor = .systemOrange
             detail.stringValue="首次使用请允许系统音频录制；然后播放一段普通音频。"
         }catch{
@@ -382,35 +408,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for id in remotes{try? await client.setSelected(id:id,on:false);if !lifecycle.isCurrent(token){return}}
             activeRemote=[]
             nativeRouteUID=nil
-            status.stringValue=mode == .nativeAirPlay ? "本地跟随未启动，原生连接未被接管。":"启动未完成，已恢复普通播放。";status.textColor = .systemOrange
+            status.stringValue=mode == .nativeAirPlay ? "启动未完成，已恢复原生播放。":"启动未完成，已恢复普通播放。";status.textColor = .systemOrange
             detail.stringValue=error.localizedDescription;alert(error.localizedDescription)
         }
     }
     private func stopPlayback(message:String){
+        guard lifecycle.phase != .stopping else{return}
         let token=lifecycle.beginStop()
         let previous=operation
-        engine.stop();nativeRouteUID=nil;volumeWork?.cancel();button.title="正在停止…";button.isEnabled=false;modePicker.isEnabled=false;busy=true
+        engine.beginFadeOut();volumeWork?.cancel();button.title="正在停止…";button.isEnabled=false;modePicker.isEnabled=false;channelPicker.isEnabled=false;busy=true
         status.stringValue=message;status.textColor = .secondaryLabelColor;detail.stringValue=""
         let ids=activeRemote
         operation=Task{@MainActor in
             await previous?.value
+            try? await Task.sleep(nanoseconds:40_000_000)
+            guard lifecycle.isCurrent(token) else{return}
+            engine.stop();nativeRouteUID=nil
             for id in ids{try? await client.setSelected(id:id,on:false)}
             guard lifecycle.isCurrent(token) else{return}
-            activeRemote=[];lifecycle.finishStop(token);busy=false;button.isEnabled=true;modePicker.isEnabled=true
-            button.title=mode == .nativeAirPlay ? "开始本地跟随":"开始共同播放"
+            activeRemote=[];lifecycle.finishStop(token);busy=false;button.isEnabled=true;modePicker.isEnabled=true;channelPicker.isEnabled=true
+            button.title=startTitle
         }
     }
     private func checkFlow(){
+        guard !busy else{return}
         checkNativeRoute()
-        guard engine.running else{return}
+        guard !busy,engine.running else{return}
         if let reason=engine.discontinuityReason{
             stopPlayback(message:"音频传输中断，已恢复普通播放。")
             detail.stringValue=reason;return
         }
         switch flow.evaluate(frames:engine.framesCaptured,bytes:engine.bytesSent,connected:engine.backendConnected,now:ProcessInfo.processInfo.systemUptime){
         case .flowing:
-            status.stringValue=mode == .nativeAirPlay ? "Mac 本地跟随正在播放":"系统音频正在传输";status.textColor = .systemGreen
-            detail.stringValue=mode == .nativeAirPlay ? "HomePod 由 TV／系统保持原生连接；Mac 提前就增加延迟，落后就减少。请以实际听音确认同步。":"请确认 HomePod 实际有声；若有回声，调节 Mac 的同步延迟。传输状态不等于已验证听音同步。"
+            status.stringValue=mode == .nativeAirPlay ? (nativeSplit ? nativeChannels.title:"Mac 本地跟随正在播放"):"系统音频正在传输";status.textColor = .systemGreen
+            detail.stringValue=mode == .nativeAirPlay ? (nativeSplit ? "两端分别播放左右声道；Mac 提前就增加延迟，落后就减少。停止后恢复 HomePod 完整声道。":"HomePod 由 TV／系统保持原生连接；Mac 提前就增加延迟，落后就减少。请以实际听音确认同步。") : "请确认 HomePod 实际有声；若有回声，调节 Mac 的同步延迟。传输状态不等于已验证听音同步。"
         case .waiting:break
         case .stalled:
             stopPlayback(message:mode == .nativeAirPlay ? "音频捕获已停滞，已停止 Mac 跟随。":"系统音频或后端传输已停滞，已恢复普通播放。")
@@ -421,8 +452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func openPanel(){showWindow()}
     @objc private func menuStop(){stopPlayback(message:mode == .nativeAirPlay ? "已停止 Mac 跟随，原生 AirPlay 继续播放。":"已停止共同播放。")}
     @objc private func showLog(){NSWorkspace.shared.open(OwnToneService.logURL)}
-    @objc private func about(){alert("Mac HomePod 同播 \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "")\n基于 HomeSounds Sync（MIT）。共同播放使用 OwnTone 后端；原生跟随只增加本地输出。\n本地构建版本，尚未公证。")}
-    @objc private func showHelp(){alert("原生 AirPlay 跟随：\n1. 先在 TV／系统声音中选择 HomePod，确认有声且画面同步。\n2. 选择原生 AirPlay 跟随模式，勾选本地扬声器后开始。\n3. Mac 提前就增加延迟，落后就减少。两种模式分别记住延迟。\n停止跟随只停止本地副本；系统离开 AirPlay 输出时会自动停止跟随。\n\n共同播放：\nMac 声音输出保持本地扬声器；选择 Mac 和 HomePod 后开始，并允许系统音频录制和本地网络权限。软件连接 HomePod，此模式不会自动补偿视频画面。\n\n两种模式都需要系统音频录制权限；受保护内容或 App 内直接投送的音频可能无法捕获。")}
+    @objc private func about(){alert("Mac HomePod 同播 \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "")\n基于 HomeSounds Sync（MIT）。共同播放使用 OwnTone 后端；原生跟随支持本地副本和左右声道分配。\n本地构建版本，尚未公证。")}
+    @objc private func showHelp(){alert("原生 AirPlay 跟随：\n1. 先在 TV／系统声音中选择 HomePod，确认有声且画面同步。\n2. 选择原生 AirPlay 跟随，设置声道分配后开始。立体声同播保留 HomePod 原声；分左右时只勾选 Mac 内置扬声器。\n3. Mac 提前就增加延迟，落后就减少。两种模式分别记住延迟。HomePod 音量在 TV／系统中调节。\n4. 停止后才能切换或交换左右。停止分声道会恢复 HomePod 完整声道；系统离开 AirPlay 输出时自动停止。启停可能有短暂切换声。\n\n共同播放：\nMac 声音输出保持本地扬声器；选择 Mac 和 HomePod 后开始，并允许系统音频录制和本地网络权限。此模式不会自动补偿视频画面。\n\n左右分配是普通立体声，不是 Apple 空间音频。两种模式都需要系统音频录制权限；受保护内容或 App 内直接投送的音频可能无法捕获。")}
     private func alert(_ text:String){let alert=NSAlert();alert.messageText="Mac HomePod 同播";alert.informativeText=text;alert.addButton(withTitle:"知道了");alert.runModal()}
 }
 
